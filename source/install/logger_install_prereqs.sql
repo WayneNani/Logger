@@ -17,7 +17,6 @@ begin
     l_req_privs('CREATE SEQUENCE')      := 1;
     l_req_privs('CREATE PROCEDURE')     := 1;
     l_req_privs('CREATE TRIGGER')       := 1;
-    l_req_privs('CREATE ANY CONTEXT')   := 1;
     l_req_privs('CREATE JOB')           := 1;
 
 

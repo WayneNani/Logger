@@ -41,7 +41,7 @@ create user &LOGGER_USER identified by &PASSWD default tablespace &LOGGER_TABLES
 alter user &LOGGER_USER quota unlimited on &LOGGER_TABLESPACE 
 /
 
-grant connect,create view, create job, create table, create sequence, create trigger, create procedure, create any context to &LOGGER_USER 
+grant connect,create view, create job, create table, create sequence, create trigger, create procedure to &LOGGER_USER 
 /
 
 prompt

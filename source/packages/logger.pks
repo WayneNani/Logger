@@ -1,7 +1,7 @@
 create or replace package logger
   authid definer
 as
-  -- This project uses the following MIT License:
+  -- This project using the following MIT License:
   --
   -- The MIT License (MIT)
   --
@@ -37,10 +37,12 @@ as
     id logger_logs.id%type,
     logger_level logger_logs.logger_level%type
   );
-
-
+  
+  -- Custom error code to reraise errors without re-logging them
+  g_logger_reraise_error_code constant integer := -20654;
+  
   -- VARIABLES
-	g_logger_version constant varchar2(10) := 'x.x.x'; -- Don't change this. Build script will replace with right version number
+	g_logger_version constant varchar2(10) := '3.1.1'; -- Don't change this. Build script will replace with right version number
 	g_context_name constant varchar2(35) := substr(sys_context('USERENV','CURRENT_SCHEMA'),1,23)||'_LOGCTX';
 
   g_off constant number := 0;
@@ -151,7 +153,8 @@ as
     p_text          in varchar2 default null,
     p_scope         in varchar2 default null,
     p_extra         in clob default null,
-    p_params        in tab_param default logger.gc_empty_tab_param);
+    p_params        in tab_param default logger.gc_empty_tab_param,
+    p_reraise       in boolean default false);
 
   procedure log_permanent(
     p_text    in varchar2,
@@ -382,4 +385,3 @@ as
     p_logger_level in logger_logs.logger_level%type)
     return logger.rec_logger_log;
 end logger;
-/

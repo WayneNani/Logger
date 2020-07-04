@@ -507,10 +507,10 @@ as
 
         if l_call_stack_pref is null then
           l_call_stack_pref := get_pref(logger.gc_pref_include_call_stack);
-          save_global_context(
+          /*save_global_context(
             p_attribute => gc_ctx_attr_include_call_stack,
             p_value => l_call_stack_pref,
-            p_client_id => sys_context('userenv','client_identifier'));
+            p_client_id => sys_context('userenv','client_identifier'));*/
         end if;
       $end
 
@@ -730,7 +730,7 @@ as
         dbms_output.put_line('l_return: ' || l_return);
       $end
 
-      save_global_context(p_attribute => p_ctx, p_value => l_return);
+      /*save_global_context(p_attribute => p_ctx, p_value => l_return);*/
       return l_return;
     end f_get_set_global_context;
 
@@ -971,10 +971,10 @@ as
 
           l_level := get_level_number;
 
-          save_global_context(
+          /*save_global_context(
             p_attribute => gc_ctx_attr_level,
             p_value => l_level,
-            p_client_id => sys_context('userenv','client_identifier'));
+            p_client_id => sys_context('userenv','client_identifier'));*/
         end if;
       $end
 
@@ -1151,6 +1151,58 @@ as
   end snapshot_apex_items;
 
 
+  function reduced_call_stack return varchar2 
+  is
+    l_call_stack varchar(4000);
+  begin
+    if utl_call_stack.dynamic_depth > 2 then
+      l_call_stack := '****** Call Stack Start ******';
+      
+      l_call_stack := l_call_stack || gc_line_feed || 'Depth     Lexical   Line      Owner     Edition   Name';
+      l_call_stack := l_call_stack || gc_line_feed || '.         Depth     Number';
+      l_call_stack := l_call_stack || gc_line_feed || '--------- --------- --------- --------- --------- --------------------';
+      
+      for i in 3..utl_call_stack.dynamic_depth loop
+        l_call_stack := l_call_stack || gc_line_feed || 
+              RPAD(i, 10) ||
+              RPAD(UTL_CALL_STACK.lexical_depth(i), 10) ||
+              RPAD(TO_CHAR(UTL_CALL_STACK.unit_line(i),'99'), 10) ||
+              RPAD(NVL(UTL_CALL_STACK.owner(i),' '), 10) ||
+              RPAD(NVL(UTL_CALL_STACK.current_edition(i),' '), 10) ||
+              UTL_CALL_STACK.concatenate_subprogram(UTL_CALL_STACK.subprogram(i));
+      end loop;
+      
+      l_call_stack := l_call_stack || gc_line_feed || '****** Call Stack End ******';
+    else
+      l_call_stack := 'Callstack irrelevant';
+    end if;
+    
+    return l_call_stack;
+  end;
+  
+  function error_stack return varchar2 
+  is
+    l_error_stack varchar(4000);
+  begin
+      l_error_stack := '****** Error Stack Start ******';
+      
+      l_error_stack := l_error_stack || gc_line_feed || 'Depth     Error     Error';
+      l_error_stack := l_error_stack || gc_line_feed || '.         Code      Message';
+      l_error_stack := l_error_stack || gc_line_feed || '--------- --------- --------------------';
+      
+      for i in 1..utl_call_stack.error_depth loop
+        l_error_stack := l_error_stack || gc_line_feed || 
+              RPAD(i, 10) ||
+              RPAD('ORA-' || LPAD(UTL_CALL_STACK.error_number(i), 5, '0'), 10) ||
+              UTL_CALL_STACK.error_msg(i);
+      end loop;
+      
+      l_error_stack := l_error_stack || gc_line_feed || '****** Error Stack End ******';
+      
+    return l_error_stack;
+  end;
+  
+  
   /**
    *
    *
@@ -1171,59 +1223,72 @@ as
     p_text in varchar2 default null,
     p_scope in varchar2 default null,
     p_extra in clob default null,
-    p_params in tab_param default logger.gc_empty_tab_param)
+    p_params in tab_param default logger.gc_empty_tab_param,
+    p_reraise in boolean default false)
   is
     l_proc_name varchar2(100);
     l_lineno varchar2(100);
     l_text varchar2(32767);
     l_call_stack varchar2(4000);
     l_extra clob;
+    l_error_code integer := SQLCODE;
   begin
     $if $$no_op $then
       null;
     $else
-      if ok_to_log(logger.g_error) then
-        get_debug_info(
-          p_callstack => dbms_utility.format_call_stack,
-          o_unit => l_proc_name,
-          o_lineno => l_lineno);
-
-        l_call_stack := dbms_utility.format_error_stack() || gc_line_feed || dbms_utility.format_error_backtrace;
-
-        if p_text is not null then
-          l_text := p_text || gc_line_feed || gc_line_feed;
-        end if;
-
-        l_text := l_text || dbms_utility.format_error_stack();
-
-        l_extra := set_extra_with_params(p_extra => p_extra, p_params => p_params);
-
-        ins_logger_logs(
-          p_unit_name => upper(l_proc_name) ,
-          p_scope => p_scope ,
-          p_logger_level => logger.g_error,
-          p_extra => l_extra,
-          p_text => l_text,
-          p_call_stack => l_call_stack,
-          p_line_no => l_lineno,
-          po_id => g_log_id);
-
-        -- Plugin
-        $if $$logger_plugin_error $then
-
-          if not g_in_plugin_error then
-            g_plug_logger_log_error.logger_level := logger.g_error;
-            g_plug_logger_log_error.id := g_log_id;
-
-            $if $$logger_debug $then
-              dbms_output.put_line('Starting call to run_plugin error');
+      if l_error_code != g_logger_reraise_error_code then
+          if ok_to_log(logger.g_error) then
+            get_debug_info(
+              p_callstack => dbms_utility.format_call_stack,
+              o_unit => l_proc_name,
+              o_lineno => l_lineno);
+    
+            l_call_stack := reduced_call_stack || 
+                gc_line_feed || 
+                gc_line_feed || dbms_utility.format_error_stack() || 
+                gc_line_feed || dbms_utility.format_error_backtrace;
+            
+            if p_text is not null then
+              l_text := p_text || gc_line_feed || gc_line_feed;
+            end if;
+    
+            l_text := l_text || dbms_utility.format_error_stack();
+    
+            l_extra := set_extra_with_params(p_extra => p_extra, p_params => p_params);
+    
+            ins_logger_logs(
+              p_unit_name => upper(l_proc_name) ,
+              p_scope => p_scope ,
+              p_logger_level => logger.g_error,
+              p_extra => l_extra,
+              p_text => l_text,
+              p_call_stack => l_call_stack,
+              p_line_no => l_lineno,
+              po_id => g_log_id);
+    
+            -- Plugin
+            $if $$logger_plugin_error $then
+    
+              if not g_in_plugin_error then
+                g_plug_logger_log_error.logger_level := logger.g_error;
+                g_plug_logger_log_error.id := g_log_id;
+    
+                $if $$logger_debug $then
+                  dbms_output.put_line('Starting call to run_plugin error');
+                $end
+    
+                run_plugin(p_logger_log => g_plug_logger_log_error);
+              end if; -- not g_in_plugin_error
             $end
-
-            run_plugin(p_logger_log => g_plug_logger_log_error);
-          end if; -- not g_in_plugin_error
-        $end
-
-      end if; -- ok_to_log
+    
+          end if; -- ok_to_log
+      end if; -- not reraise_error_code
+      
+      if p_reraise then
+        raise_application_error(
+            g_logger_reraise_error_code,
+            'Logger reraise error'); 
+      end if;
     $end
   end log_error;
 
@@ -1717,7 +1782,7 @@ as
 
         g_proc_start_times(p_unit) := localtimestamp;
 
-        l_text := l_pad||'START: '||p_unit;
+        l_text := l_pad||'START TIMER: '||p_unit;
 
         if p_log_in_table then
           ins_logger_logs(
@@ -2429,10 +2494,10 @@ as
           logger.null_global_contexts;
         end if;
 
-        logger.save_global_context(
+        /*logger.save_global_context(
           p_attribute => gc_ctx_attr_level,
           p_value => logger.convert_level_char_to_num(l_level),
-          p_client_id => p_client_id); -- Note: if p_client_id is null then it will set for global`
+          p_client_id => p_client_id); -- Note: if p_client_id is null then it will set for global`*/
 
         -- Manual insert to ensure that data gets logged, regardless of logger_level
         logger.ins_logger_logs(
@@ -2953,4 +3018,3 @@ as
   end get_plugin_rec;
 
 end logger;
-/
